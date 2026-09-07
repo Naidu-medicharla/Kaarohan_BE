@@ -1,13 +1,26 @@
+import re
+
+from psycopg import AsyncConnection, errors
+from psycopg.sql import SQL, Identifier
 from psycopg_pool import AsyncConnectionPool
 
 from app.config import settings
 
-SCHEMA_SQL = """
+RESERVED_TABLE_NAMES = {"events", "leaderboard"}
+
+LEADERBOARD_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS leaderboard (
     id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     team_name   TEXT NOT NULL UNIQUE,
     position    INTEGER NOT NULL DEFAULT 0,
     points      INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+EVENTS_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS events (
+    id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    event_name  TEXT NOT NULL UNIQUE
 );
 """
 
@@ -46,4 +59,63 @@ def get_pool() -> AsyncConnectionPool:
 
 async def ensure_schema() -> None:
     async with get_pool().connection() as conn:
-        await conn.execute(SCHEMA_SQL)
+        await conn.execute(LEADERBOARD_SCHEMA_SQL)
+        await conn.execute(EVENTS_SCHEMA_SQL)
+
+
+def event_table_slug(event_name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", event_name.strip().lower()).strip("_")
+    if not slug:
+        raise ValueError("event_name must contain at least one letter or digit")
+    if slug[0].isdigit():
+        slug = f"e_{slug}"
+    if slug in RESERVED_TABLE_NAMES:
+        raise ValueError(f"event_name '{event_name}' collides with a reserved table name")
+    return slug
+
+
+def event_scores_identifier(event_name: str) -> Identifier:
+    # The table is named after the event itself (e.g. "Ethnic Day" -> ethnic_day)
+    # rather than its numeric id, per request. Identifier() properly quotes the
+    # slug so spaces/case are never an issue even though the slug itself is
+    # already restricted to [a-z0-9_].
+    return Identifier(event_table_slug(event_name))
+
+
+async def create_event_score_table(conn: AsyncConnection, event_name: str) -> None:
+    table = event_scores_identifier(event_name)
+    try:
+        await conn.execute(
+            SQL(
+                """
+                CREATE TABLE {} (
+                    id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    team_name   TEXT NOT NULL UNIQUE,
+                    points      INTEGER NOT NULL DEFAULT 0
+                );
+                """
+            ).format(table)
+        )
+    except errors.DuplicateTable:
+        raise ValueError(f"event_name '{event_name}' produces a table name that already exists")
+    team_rows = await (await conn.execute("SELECT team_name FROM leaderboard ORDER BY team_name;")).fetchall()
+    for (team_name,) in team_rows:
+        await conn.execute(
+            SQL("INSERT INTO {} (team_name) VALUES (%s);").format(table),
+            (team_name,),
+        )
+
+
+async def sync_leaderboard_points(conn: AsyncConnection, team_name: str) -> None:
+    event_names = [
+        row[0] for row in await (await conn.execute("SELECT event_name FROM events ORDER BY id;")).fetchall()
+    ]
+    total = 0
+    for event_name in event_names:
+        table = event_scores_identifier(event_name)
+        row = await (
+            await conn.execute(SQL("SELECT points FROM {} WHERE team_name = %s;").format(table), (team_name,))
+        ).fetchone()
+        if row is not None:
+            total += row[0]
+    await conn.execute("UPDATE leaderboard SET points = %s WHERE team_name = %s;", (total, team_name))

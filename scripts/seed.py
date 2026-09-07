@@ -1,7 +1,7 @@
 import psycopg
 
 from app.config import settings
-from app.db import SCHEMA_SQL
+from app.db import LEADERBOARD_SCHEMA_SQL
 
 # Exact spellings from the frontend's src/content/teams.json (authoritative,
 # already live on the site) — not the typo'd names typed in chat.
@@ -24,7 +24,7 @@ ON CONFLICT (team_name) DO NOTHING;
 
 def main() -> None:
     with psycopg.connect(settings.database_url, prepare_threshold=None) as conn:
-        conn.execute(SCHEMA_SQL)
+        conn.execute(LEADERBOARD_SCHEMA_SQL)
         for team_name in TEAM_NAMES:
             conn.execute(INSERT_SQL, (team_name,))
     print(f"seeded {len(TEAM_NAMES)} teams (existing rows left untouched)")
