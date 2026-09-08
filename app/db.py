@@ -24,6 +24,29 @@ CREATE TABLE IF NOT EXISTS events (
 );
 """
 
+TT_SINGLES_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS tt_mens_singles (
+    id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    match_number  INTEGER NOT NULL UNIQUE,
+    player_a      TEXT NOT NULL,
+    player_b      TEXT NOT NULL,
+    winner        TEXT
+);
+"""
+
+TT_DOUBLES_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS tt_mens_doubles (
+    id              INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    match_number    INTEGER NOT NULL UNIQUE,
+    pair_a_player1  TEXT NOT NULL,
+    pair_a_player2  TEXT NOT NULL,
+    pair_b_player1  TEXT NOT NULL,
+    pair_b_player2  TEXT NOT NULL,
+    winner_player1  TEXT,
+    winner_player2  TEXT
+);
+"""
+
 pool: AsyncConnectionPool | None = None
 
 
@@ -61,6 +84,8 @@ async def ensure_schema() -> None:
     async with get_pool().connection() as conn:
         await conn.execute(LEADERBOARD_SCHEMA_SQL)
         await conn.execute(EVENTS_SCHEMA_SQL)
+        await conn.execute(TT_SINGLES_SCHEMA_SQL)
+        await conn.execute(TT_DOUBLES_SCHEMA_SQL)
 
 
 def event_table_slug(event_name: str) -> str:
