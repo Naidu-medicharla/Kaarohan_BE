@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db import close_pool, ensure_schema, open_pool
+from app.routers.carrom import router as carrom_router
 from app.routers.events import router as events_router
 from app.routers.leaderboard import router as leaderboard_router
 from app.routers.scores import router as scores_router
@@ -32,6 +33,7 @@ app.include_router(leaderboard_router, prefix="/api")
 app.include_router(events_router, prefix="/api")
 app.include_router(scores_router, prefix="/api")
 app.include_router(tt_router, prefix="/api")
+app.include_router(carrom_router, prefix="/api")
 
 
 @app.get("/")

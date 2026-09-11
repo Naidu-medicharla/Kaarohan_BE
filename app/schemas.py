@@ -1,4 +1,11 @@
+from typing import Literal
+
 from pydantic import BaseModel
+
+TTCategory = Literal["Mens Singles", "Mens Doubles", "Womens Singles", "Womens Doubles", "Mixed Doubles"]
+TTRound = Literal["Round 1", "Round 2", "Round 3", "Semi Finals", "Finals"]
+
+CarromRound = Literal["Round 1", "Round 2", "Semi Finals", "Finals"]
 
 
 class LeaderboardEntry(BaseModel):
@@ -27,41 +34,28 @@ class EventScoreEntry(BaseModel):
     points: int
 
 
-class SinglesMatchEntry(BaseModel):
+class TTMatchEntry(BaseModel):
     id: int
-    match_number: int
+    category: TTCategory
+    round: TTRound
     player_a: str
     player_b: str
-    winner: str | None
-
-
-class SinglesMatchCreateRequest(BaseModel):
-    player_a: str
-    player_b: str
-
-
-class SinglesWinnerRequest(BaseModel):
     winner: str
 
 
-class DoublesMatchEntry(BaseModel):
+class CarromMatchEntry(BaseModel):
     id: int
-    match_number: int
-    pair_a_player1: str
-    pair_a_player2: str
-    pair_b_player1: str
-    pair_b_player2: str
-    winner_player1: str | None
-    winner_player2: str | None
+    round: CarromRound
+    player_a: str
+    player_b: str
+    winner: str
 
 
-class DoublesMatchCreateRequest(BaseModel):
-    pair_a_player1: str
-    pair_a_player2: str
-    pair_b_player1: str
-    pair_b_player2: str
-
-
-class DoublesWinnerRequest(BaseModel):
-    winner_player1: str
-    winner_player2: str
+class TTTeamScoreEntry(BaseModel):
+    team_name: str
+    mens_singles: int
+    mens_doubles: int
+    womens_singles: int
+    womens_doubles: int
+    mixed_doubles: int
+    total: int

@@ -3,7 +3,7 @@ from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg.sql import SQL
 
-from app.db import event_scores_identifier, get_pool, sync_leaderboard_points
+from app.db import event_scores_identifier, get_pool, sync_leaderboard_points_bulk
 from app.schemas import EventScoreEntry
 
 router = APIRouter()
@@ -66,8 +66,7 @@ async def _apply_scores(
                 )
             results.append(row)
 
-    for team_name in team_names:
-        await sync_leaderboard_points(conn, team_name)
+    await sync_leaderboard_points_bulk(conn, team_names)
     await conn.commit()
     return results
 
