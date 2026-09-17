@@ -12,7 +12,7 @@ class LeaderboardEntry(BaseModel):
     id: int
     team_name: str
     position: int
-    points: int
+    points: float
 
 
 class EventEntry(BaseModel):
@@ -31,7 +31,7 @@ class EventCreateRequest(BaseModel):
 class EventScoreEntry(BaseModel):
     id: int
     team_name: str
-    points: int
+    points: float
 
 
 class TTMatchEntry(BaseModel):
@@ -46,6 +46,14 @@ class TTMatchEntry(BaseModel):
 class CarromMatchEntry(BaseModel):
     id: int
     round: CarromRound
+    player_a: str
+    player_b: str
+    winner: str
+
+
+class TTMensSinglesEntry(BaseModel):
+    id: int
+    match_number: int
     player_a: str
     player_b: str
     winner: str

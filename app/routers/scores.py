@@ -23,7 +23,7 @@ async def _apply_scores(
     event_id: int,
     event_name: str,
     team_names: list[str],
-    points_list: list[int],
+    points_list: list[float],
 ) -> list[dict]:
     if len(team_names) != len(points_list):
         raise HTTPException(
@@ -75,7 +75,7 @@ async def _apply_scores(
 async def set_scores(
     event_id: int,
     team_name: list[str] = Form(...),
-    points: list[int] = Form(...),
+    points: list[float] = Form(...),
 ) -> list[dict]:
     async with get_pool().connection() as conn:
         event_name = await _get_event_name_or_404(conn, event_id)
@@ -86,7 +86,7 @@ async def set_scores(
 async def update_scores(
     event_id: int,
     team_name: list[str] = Form(...),
-    points: list[int] = Form(...),
+    points: list[float] = Form(...),
 ) -> list[dict]:
     async with get_pool().connection() as conn:
         event_name = await _get_event_name_or_404(conn, event_id)

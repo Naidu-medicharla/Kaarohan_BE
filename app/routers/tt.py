@@ -4,7 +4,7 @@ from fastapi import APIRouter, Form, HTTPException, Query
 from psycopg.rows import dict_row
 
 from app.db import get_pool, sync_leaderboard_points, sync_leaderboard_points_bulk
-from app.schemas import TTCategory, TTMatchEntry, TTRound, TTTeamScoreEntry
+from app.schemas import TTCategory, TTMatchEntry, TTMensSinglesEntry, TTRound, TTTeamScoreEntry
 
 router = APIRouter(prefix="/tt")
 
@@ -370,3 +370,217 @@ async def update_tt_score(
     mixed_doubles: Optional[int] = Form(None),
 ) -> dict:
     return await _set_tt_score(team_name, mens_singles, mens_doubles, womens_singles, womens_doubles, mixed_doubles)
+
+
+@router.patch("/scores/category/bulk", response_model=list[TTTeamScoreEntry])
+async def update_tt_scores_category_bulk(
+    category: TTCategory = Form(...),
+    team_name: list[str] = Form(...),
+    score: list[int] = Form(...),
+) -> list[dict]:
+    if len(team_name) != len(score):
+        raise HTTPException(
+            status_code=400,
+            detail=f"team_name has {len(team_name)} entries but score has {len(score)}",
+        )
+    
+    duplicates = {name for name in team_name if team_name.count(name) > 1}
+    if duplicates:
+        raise HTTPException(
+            status_code=400,
+            detail=f"duplicate team_name in request: {', '.join(sorted(duplicates))} — each team can only appear once",
+        )
+        
+    column_map = {
+        "Mens Singles": "mens_singles",
+        "Mens Doubles": "mens_doubles",
+        "Womens Singles": "womens_singles",
+        "Womens Doubles": "womens_doubles",
+        "Mixed Doubles": "mixed_doubles",
+    }
+    col_name = column_map[category]
+
+    values_clause = ", ".join(["(%s, %s)"] * len(team_name))
+    params = []
+    for name, s in zip(team_name, score):
+        params.extend([name, s])
+
+    async with get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"""
+                UPDATE tt_team_scores AS t
+                SET {col_name} = v.score
+                FROM (VALUES {values_clause})
+                    AS v(team_name, score)
+                WHERE t.team_name = v.team_name
+                RETURNING t.{TT_SCORE_COLUMNS.replace(", ", ", t.")};
+                """,
+                params,
+            )
+            rows = await cur.fetchall()
+
+            if len(rows) != len(team_name):
+                matched = {row["team_name"] for row in rows}
+                unknown = [name for name in team_name if name not in matched]
+                await conn.rollback()
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"team_name(s) not found: {', '.join(unknown)}",
+                )
+
+        await sync_leaderboard_points_bulk(conn, team_name)
+        await conn.commit()
+    return rows
+
+
+# --------------------------------------------------------- mens singles ------
+# CRUD for the tt_mens_singles table (8 teams, round-robin / knockout bracket).
+# Each row is one match: match_number (for ordering), player_a, player_b,
+# winner (defaults to "NOT STARTED"). No category field — this table is
+# exclusively Men's Singles.
+
+MS_COLUMNS = "id, match_number, player_a, player_b, winner"
+
+
+@router.get("/mens-singles", response_model=list[TTMensSinglesEntry])
+async def list_mens_singles(
+    match_number: Optional[int] = Query(None),
+) -> list[dict]:
+    """Return all Men's Singles matches, optionally filtered by match_number."""
+    query = f"SELECT {MS_COLUMNS} FROM tt_mens_singles"
+    params: list = []
+    if match_number is not None:
+        query += " WHERE match_number = %s"
+        params.append(match_number)
+    query += " ORDER BY match_number, id;"
+    async with get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(query, params)
+            return await cur.fetchall()
+
+
+@router.post("/mens-singles", response_model=TTMensSinglesEntry, status_code=201)
+async def create_mens_singles_match(
+    match_number: int = Form(...),
+    player_a: str = Form(...),
+    player_b: str = Form(...),
+    winner: str = Form("NOT STARTED"),
+) -> dict:
+    """Create a single Men's Singles match."""
+    async with get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"""
+                INSERT INTO tt_mens_singles (match_number, player_a, player_b, winner)
+                VALUES (%s, %s, %s, %s)
+                RETURNING {MS_COLUMNS};
+                """,
+                (match_number, player_a, player_b, winner),
+            )
+            row = await cur.fetchone()
+        await conn.commit()
+    return row
+
+
+@router.post("/mens-singles/bulk", response_model=list[TTMensSinglesEntry], status_code=201)
+async def create_mens_singles_bulk(
+    match_number: list[int] = Form(...),
+    player_a: list[str] = Form(...),
+    player_b: list[str] = Form(...),
+    winner: list[str] = Form([]),
+) -> list[dict]:
+    """
+    Bulk-create Men's Singles matches in one request.
+
+    Repeat match_number/player_a/player_b (and optionally winner) as form
+    fields, one value per match — same convention as /matches/bulk.
+    Missing winner entries default to "NOT STARTED".
+    """
+    if len(match_number) != len(player_a) or len(player_a) != len(player_b):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"match_number ({len(match_number)}), player_a ({len(player_a)}), "
+                f"and player_b ({len(player_b)}) must all have the same number of entries"
+            ),
+        )
+    if len(winner) > len(match_number):
+        raise HTTPException(
+            status_code=400,
+            detail=f"winner has {len(winner)} entries but only {len(match_number)} matches were given",
+        )
+    winners = winner + ["NOT STARTED"] * (len(match_number) - len(winner))
+
+    values_clause = ", ".join(["(%s, %s, %s, %s)"] * len(match_number))
+    params: list = []
+    for mn, a, b, w in zip(match_number, player_a, player_b, winners):
+        params.extend([mn, a, b, w])
+
+    async with get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"""
+                INSERT INTO tt_mens_singles (match_number, player_a, player_b, winner)
+                VALUES {values_clause}
+                RETURNING {MS_COLUMNS};
+                """,
+                params,
+            )
+            rows = await cur.fetchall()
+        await conn.commit()
+    return rows
+
+
+@router.patch("/mens-singles/{match_id}", response_model=TTMensSinglesEntry)
+async def update_mens_singles_match(
+    match_id: int,
+    match_number: Optional[int] = Form(None),
+    player_a: Optional[str] = Form(None),
+    player_b: Optional[str] = Form(None),
+    winner: Optional[str] = Form(None),
+) -> dict:
+    """
+    Partially update a Men's Singles match (typically to set the winner after
+    a match is played). Provide only the fields that need to change.
+    """
+    updates: dict = {
+        "match_number": match_number,
+        "player_a": player_a,
+        "player_b": player_b,
+        "winner": winner,
+    }
+    updates = {field: value for field, value in updates.items() if value is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="Provide at least one field to update")
+
+    set_clause = ", ".join(f"{field} = %s" for field in updates)
+    params = [*updates.values(), match_id]
+
+    async with get_pool().connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"UPDATE tt_mens_singles SET {set_clause} WHERE id = %s "
+                f"RETURNING {MS_COLUMNS};",
+                params,
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"Match {match_id} not found")
+        await conn.commit()
+    return row
+
+
+@router.delete("/mens-singles/{match_id}", status_code=204)
+async def delete_mens_singles_match(match_id: int) -> None:
+    """Delete a single Men's Singles match by id."""
+    async with get_pool().connection() as conn:
+        cur = await conn.execute(
+            "DELETE FROM tt_mens_singles WHERE id = %s RETURNING id;",
+            (match_id,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Match {match_id} not found")
+        await conn.commit()
+
